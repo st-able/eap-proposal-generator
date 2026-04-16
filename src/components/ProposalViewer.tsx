@@ -5,8 +5,9 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { GlassButton } from "@/components/ui/GlassButton";
 import { LoadingPulse } from "@/components/ui/LoadingPulse";
+import { SlideViewer } from "@/components/SlideViewer";
 import { getDomainFromUrl, copyToClipboard, downloadAsFile, formatDate } from "@/lib/utils";
-import type { Proposal, GenerateStatus } from "@/types";
+import type { Proposal, GenerateStatus, SlideClientData, SlideStatus } from "@/types";
 
 interface ProposalViewerProps {
   proposal: Proposal | null;
@@ -16,6 +17,9 @@ interface ProposalViewerProps {
 
 export function ProposalViewer({ proposal, status, error }: ProposalViewerProps) {
   const [copied, setCopied] = useState(false);
+  const [slideStatus, setSlideStatus] = useState<SlideStatus>("idle");
+  const [slideData, setSlideData] = useState<SlideClientData | null>(null);
+  const [showSlides, setShowSlides] = useState(false);
 
   async function handleCopy() {
     if (!proposal) return;
@@ -28,6 +32,29 @@ export function ProposalViewer({ proposal, status, error }: ProposalViewerProps)
     if (!proposal) return;
     const filename = `EAP_제안서_${proposal.client_name || getDomainFromUrl(proposal.client_url)}_${new Date().toISOString().slice(0, 10)}.md`;
     downloadAsFile(proposal.proposal_markdown, filename, "text/markdown");
+  }
+
+  async function handleGenerateSlides() {
+    if (!proposal?.id) return;
+    setSlideStatus("generating");
+
+    try {
+      const res = await fetch("/api/slides", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ proposal_id: proposal.id }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setSlideStatus("error");
+        return;
+      }
+      setSlideData(data.slides_json as SlideClientData);
+      setSlideStatus("done");
+      setShowSlides(true);
+    } catch {
+      setSlideStatus("error");
+    }
   }
 
   /* 초기 상태 */
@@ -89,42 +116,98 @@ export function ProposalViewer({ proposal, status, error }: ProposalViewerProps)
 
   if (!proposal) return null;
 
+  const clientName = proposal.client_name || getDomainFromUrl(proposal.client_url);
+  const proposalDate = new Date(proposal.created_at).toLocaleDateString("ko-KR", {
+    year: "numeric", month: "long", day: "numeric",
+  });
+
   /* 완성된 제안서 */
   return (
-    <div className="bg-white border border-[#EDECE9] rounded-2xl shadow-[0_2px_8px_rgba(0,0,0,0.07)] overflow-hidden animate-fade-in">
-      {/* 헤더 바 */}
-      <div className="flex items-center justify-between px-5 py-3.5 border-b border-[#F0EFEC] bg-[#FAFAF8]">
-        <div className="flex items-center gap-3 min-w-0">
-          <div className="w-8 h-8 rounded-lg bg-[#FDF0ED] border border-[#F5C5BA] flex items-center justify-center shrink-0">
-            <AccentDocIcon />
+    <>
+      {/* 슬라이드 뷰어 모달 */}
+      {showSlides && slideData && (
+        <SlideViewer
+          clientName={clientName}
+          clientUrl={proposal.client_url}
+          proposalDate={proposalDate}
+          data={slideData}
+          onClose={() => setShowSlides(false)}
+        />
+      )}
+
+      <div className="bg-white border border-[#EDECE9] rounded-2xl shadow-[0_2px_8px_rgba(0,0,0,0.07)] overflow-hidden animate-fade-in">
+        {/* 헤더 바 */}
+        <div className="flex items-center justify-between px-5 py-3.5 border-b border-[#F0EFEC] bg-[#FAFAF8]">
+          <div className="flex items-center gap-3 min-w-0">
+            <div className="w-8 h-8 rounded-lg bg-[#FDF0ED] border border-[#F5C5BA] flex items-center justify-center shrink-0">
+              <AccentDocIcon />
+            </div>
+            <div className="min-w-0">
+              <p className="text-[13px] font-semibold text-[#1C1C1C] truncate">{clientName}</p>
+              <p className="text-[11px] text-[#BCBAB6] truncate">{formatDate(proposal.created_at)}</p>
+            </div>
           </div>
-          <div className="min-w-0">
-            <p className="text-[13px] font-semibold text-[#1C1C1C] truncate">
-              {proposal.client_name || getDomainFromUrl(proposal.client_url)}
-            </p>
-            <p className="text-[11px] text-[#BCBAB6] truncate">{formatDate(proposal.created_at)}</p>
+
+          <div className="flex items-center gap-2 ml-4 shrink-0">
+            {/* 슬라이드 버튼 */}
+            {slideStatus === "idle" && (
+              <GlassButton
+                variant="ghost"
+                size="sm"
+                onClick={handleGenerateSlides}
+                className="gap-1.5 text-[12px] border-[#E07B65] text-[#E07B65] hover:bg-[#FDF0ED]"
+              >
+                <SlidesIcon />
+                슬라이드 생성
+              </GlassButton>
+            )}
+            {slideStatus === "generating" && (
+              <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-[#F5C5BA] bg-[#FDF0ED] text-[12px] text-[#E07B65]">
+                <SpinnerIcon />
+                슬라이드 생성 중...
+              </div>
+            )}
+            {slideStatus === "done" && slideData && (
+              <GlassButton
+                variant="ghost"
+                size="sm"
+                onClick={() => setShowSlides(true)}
+                className="gap-1.5 text-[12px] bg-[#E07B65] text-white border-[#E07B65] hover:bg-[#CF6A55]"
+              >
+                <PresentationIcon />
+                슬라이드 보기
+              </GlassButton>
+            )}
+            {slideStatus === "error" && (
+              <GlassButton
+                variant="ghost"
+                size="sm"
+                onClick={handleGenerateSlides}
+                className="gap-1.5 text-[12px] text-red-500"
+              >
+                재시도
+              </GlassButton>
+            )}
+
+            <GlassButton variant="ghost" size="sm" onClick={handleCopy} className="gap-1.5 text-[12px]">
+              {copied ? <CheckIcon /> : <CopyIcon />}
+              {copied ? "복사됨" : "복사"}
+            </GlassButton>
+            <GlassButton variant="ghost" size="sm" onClick={handleDownload} className="gap-1.5 text-[12px]">
+              <DownloadIcon />
+              다운로드
+            </GlassButton>
           </div>
         </div>
 
-        <div className="flex items-center gap-2 ml-4 shrink-0">
-          <GlassButton variant="ghost" size="sm" onClick={handleCopy} className="gap-1.5 text-[12px]">
-            {copied ? <CheckIcon /> : <CopyIcon />}
-            {copied ? "복사됨" : "복사"}
-          </GlassButton>
-          <GlassButton variant="ghost" size="sm" onClick={handleDownload} className="gap-1.5 text-[12px]">
-            <DownloadIcon />
-            다운로드
-          </GlassButton>
+        {/* 본문 */}
+        <div className="p-6 overflow-auto">
+          <ReactMarkdown className="proposal-prose" remarkPlugins={[remarkGfm]}>
+            {proposal.proposal_markdown}
+          </ReactMarkdown>
         </div>
       </div>
-
-      {/* 본문 */}
-      <div className="p-6 overflow-auto">
-        <ReactMarkdown className="proposal-prose" remarkPlugins={[remarkGfm]}>
-          {proposal.proposal_markdown}
-        </ReactMarkdown>
-      </div>
-    </div>
+    </>
   );
 }
 
@@ -150,7 +233,7 @@ function AccentDocIcon() {
 
 function SpinnerIcon() {
   return (
-    <svg className="animate-spin" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#E07B65" strokeWidth="2.5" strokeLinecap="round">
+    <svg className="animate-spin" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
       <path d="M21 12a9 9 0 1 1-6.219-8.56" />
     </svg>
   );
@@ -189,6 +272,24 @@ function DownloadIcon() {
       <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
       <polyline points="7 10 12 15 17 10" />
       <line x1="12" y1="15" x2="12" y2="3" />
+    </svg>
+  );
+}
+
+function SlidesIcon() {
+  return (
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="2" y="3" width="20" height="14" rx="2" />
+      <line x1="8" y1="21" x2="16" y2="21" />
+      <line x1="12" y1="17" x2="12" y2="21" />
+    </svg>
+  );
+}
+
+function PresentationIcon() {
+  return (
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M5 3l14 9-14 9V3z" />
     </svg>
   );
 }
